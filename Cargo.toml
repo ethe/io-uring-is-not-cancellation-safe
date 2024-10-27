@@ -4,4 +4,5 @@ name = "cancel-unsafe"
 version = "0.1.0"
 
 [dependencies]
-monoio = { version = "0.2.4" }
+compio = { version = "0.12.0", features = ["all"] }
+futures = "0.3.31"
