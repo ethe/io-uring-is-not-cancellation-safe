@@ -1,49 +1,61 @@
 use std::thread;
 use std::time::Duration;
 
-use monoio::io::{AsyncReadRentExt, AsyncWriteRentExt};
-use monoio::net::{TcpListener, TcpStream};
-use monoio::time::TimeDriver;
-use monoio::{select, time, IoUringDriver};
+use futures::{pin_mut, FutureExt};
+use futures_lite::{AsyncReadExt, AsyncWriteExt};
+use glommio::net::{TcpListener, TcpStream};
+use glommio::timer::sleep;
+use glommio::{LocalExecutorBuilder, Placement};
 
-// #[monoio::main(driver = "legacy", enable_timer = true)]
-#[monoio::main(driver = "io_uring", enable_timer = true)]
-async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
+fn main() {
+    let ex = LocalExecutorBuilder::new(Placement::Unbound)
+        .name("server")
+        .make()
+        .unwrap();
 
-    thread::spawn(move || {
-        monoio::start::<TimeDriver<IoUringDriver>, _>(async move {
-            loop {
-                println!("connecting");
-                let mut stream = TcpStream::connect(addr).await.unwrap();
-                println!("connected");
-                let (result, _) = stream.write_all("hello world").await;
-                result.unwrap();
-                let (result, _) = stream.read_exact(vec![0; 11]).await;
-                result.unwrap();
-                time::sleep(Duration::from_millis(1)).await;
-                println!("completed");
-            }
+    ex.run(async move {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        thread::spawn(move || {
+            let ex = LocalExecutorBuilder::new(Placement::Unbound)
+                .name("client")
+                .make()
+                .unwrap();
+            ex.run(async move {
+                let mut counter = 0;
+                loop {
+                    let mut stream = TcpStream::connect(addr).await.unwrap();
+                    println!("connected {}", counter);
+                    let result = stream.write_all(b"hello world").await;
+                    result.unwrap();
+                    let result = stream.read_exact(&mut vec![0; 11][..]).await;
+                    result.unwrap();
+                    sleep(Duration::from_millis(100)).await;
+                    println!("completed {}", counter);
+                    counter += 1;
+                }
+            });
         });
-    });
 
-    loop {
-        select! {
-            stream = listener.accept() => {
-                println!("accept");
-                let (mut stream, _) = stream.unwrap();
-                println!("accepted {:?}", stream.peer_addr().unwrap());
-                let (result, buf) = stream.read_exact(vec![0; 11]).await;
-                result.unwrap();
-                println!("{:?}", buf);
-                let (result, _) = stream.write_all(buf).await;
-                result.unwrap();
-            }
-            _ = time::sleep(Duration::from_millis(1)) => {
-                println!("timeout");
-                continue;
+        loop {
+            let t1 = listener.accept().fuse();
+            let t2 = sleep(Duration::from_millis(1)).fuse();
+            pin_mut!(t1, t2);
+
+            futures::select! {
+                stream = t1 => {
+                    let mut stream = stream.unwrap();
+                    let mut buf = vec![0; 11];
+                    let result = stream.read_exact(&mut buf[..]).await;
+                    result.unwrap();
+                    let result = stream.write_all(&buf).await;
+                    result.unwrap();
+                }
+                _ = t2 => {
+                    continue;
+                }
             }
         }
-    }
+    });
 }

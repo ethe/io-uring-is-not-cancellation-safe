@@ -4,4 +4,6 @@ name = "cancel-unsafe"
 version = "0.1.0"
 
 [dependencies]
-monoio = { version = "0.2.4" }
+futures = "0.3.31"
+futures-lite = "2.3.0"
+glommio = "0.9.0"
