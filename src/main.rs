@@ -30,15 +30,29 @@ async fn main() {
     });
 
     loop {
+        let canceler = monoio::io::Canceller::new();
+        let handle = canceler.handle();
+        let mut timer = std::pin::pin!(time::sleep(Duration::from_millis(1)));
+        let mut accept = std::pin::pin!(listener.cancelable_accept(handle));
+
         select! {
-            stream = listener.accept() => {
+            stream = &mut accept => {
                 let (mut stream, _) = stream.unwrap();
                 let (result, buf) = stream.read_exact(vec![0; 11]).await;
                 result.unwrap();
                 let (result, _) = stream.write_all(buf).await;
                 result.unwrap();
             }
-            _ = time::sleep(Duration::from_millis(1)) => {
+            _ = &mut timer => {
+                canceler.cancel();
+                let stream = (&mut accept).await;
+                if let Ok(stream) = stream {
+                    let (mut stream, _) = stream;
+                    let (result, buf) = stream.read_exact(vec![0; 11]).await;
+                    result.unwrap();
+                    let (result, _) = stream.write_all(buf).await;
+                    result.unwrap();
+                }
                 continue;
             }
         }
